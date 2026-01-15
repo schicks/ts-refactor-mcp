@@ -30,17 +30,23 @@ jobs:
       - name: Check version is greater than latest release
         run: |
           CURRENT_VERSION=$(node -p "require('./package.json').version")
-          LATEST_RELEASE=$(gh release view --json tagName -q .tagName 2>/dev/null | sed 's/^v//' || echo "0.0.0")
+          LATEST_RELEASE_RAW=$(gh release view --json tagName -q .tagName 2>/dev/null || echo "")
           
-          echo "Current version: $CURRENT_VERSION"
-          echo "Latest release: $LATEST_RELEASE"
-          
-          if ! npx --yes semver "$CURRENT_VERSION" -r ">$LATEST_RELEASE"; then
-            echo "Error: package.json version ($CURRENT_VERSION) must be greater than latest release ($LATEST_RELEASE)"
-            exit 1
+          if [ -z "$LATEST_RELEASE_RAW" ]; then
+            echo "No releases found, skipping version check"
+            echo "Current version: $CURRENT_VERSION"
+          else
+            LATEST_RELEASE=$(echo "$LATEST_RELEASE_RAW" | sed 's/^v//')
+            echo "Current version: $CURRENT_VERSION"
+            echo "Latest release: $LATEST_RELEASE"
+            
+            if ! npx --yes semver "$CURRENT_VERSION" -r ">$LATEST_RELEASE"; then
+              echo "Error: package.json version ($CURRENT_VERSION) must be greater than latest release ($LATEST_RELEASE)"
+              exit 1
+            fi
+            
+            echo "✓ Version check passed"
           fi
-          
-          echo "✓ Version check passed"
         env:
           GH_TOKEN: ${{ github.token }}
 
