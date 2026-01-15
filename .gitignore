@@ -3,6 +3,8 @@ node_modules/
 
 # Build output
 dist/
+*.js
+!jest.config.js
 
 # Test coverage
 coverage/

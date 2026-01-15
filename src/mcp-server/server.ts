@@ -163,8 +163,8 @@ export class TsRefactorServer {
       // Apply edits and move file
       await applyEditsAndMoveFile(edits, oldPath, newPath);
 
-      // Notify tsserver
-      await client.notifyFileChanged(newPath);
+      // Note: We don't need to notify tsserver about the file move
+      // tsserver will detect the changes when needed
 
       const durationMs = Date.now() - startTime;
 
@@ -290,5 +290,33 @@ export class TsRefactorServer {
       client.dispose();
     }
     this.clients.clear();
+  }
+
+  /**
+   * Public method for testing: move a file and update imports
+   */
+  async moveFile(args: {
+    projectRoot: string;
+    oldPath: string;
+    newPath: string;
+    dryRun?: boolean;
+  }): Promise<MoveFileResult | DryRunResult> {
+    const result = await this.handleMoveFile(args);
+    return JSON.parse(result.content[0].text);
+  }
+
+  /**
+   * Public method for testing: warmup a project
+   */
+  async warmup(projectRoot: string): Promise<WarmupResult> {
+    const result = await this.handleWarmup({ projectRoot });
+    return JSON.parse(result.content[0].text);
+  }
+
+  /**
+   * Public method for testing: cleanup
+   */
+  dispose(): void {
+    this.cleanup();
   }
 }

@@ -10,6 +10,7 @@
   "scripts": {
     "build": "tsc",
     "watch": "tsc --watch",
+    "type-check": "tsc --noEmit",
     "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js",
     "test:watch": "node --experimental-vm-modules node_modules/jest/bin/jest.js --watch",
     "dev": "npm run build && node dist/index.js",
