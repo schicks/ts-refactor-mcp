@@ -7,6 +7,7 @@ on:
 jobs:
   canary:
     runs-on: ubuntu-latest
+    environment: canary
 
     permissions:
       contents: read
@@ -48,9 +49,7 @@ jobs:
           npm version ${CANARY_VERSION} --no-git-tag-version
 
       - name: Publish canary to npm
-        run: npm publish --tag canary --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --tag canary --provenance --access public
 
       - name: Comment on PR
         uses: actions/github-script@v7
