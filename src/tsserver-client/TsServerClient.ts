@@ -1,8 +1,7 @@
 import { spawn, ChildProcess } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { existsSync } from 'node:fs';
-import type { FileEdit, Position, TextEdit } from '../types/index.js';
+import type { FileEdit } from '../types/index.js';
 
 /**
  * Protocol types for tsserver communication
@@ -63,7 +62,6 @@ export class TsServerClient {
   >();
   private buffer = '';
   private readonly projectRoot: string;
-  private tsserverPath: string | null = null;
 
   constructor(projectRoot: string) {
     this.projectRoot = projectRoot;
@@ -80,8 +78,6 @@ export class TsServerClient {
         'Could not find tsserver. Make sure typescript is installed in node_modules.'
       );
     }
-
-    this.tsserverPath = tsserverPath;
 
     // Spawn tsserver
     this.process = spawn('node', [tsserverPath], {

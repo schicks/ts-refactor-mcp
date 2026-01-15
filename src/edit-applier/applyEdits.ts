@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname } from 'node:path';
 import { existsSync } from 'node:fs';
 import type { FileEdit, TextEdit } from '../types/index.js';
 
