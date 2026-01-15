@@ -1,286 +1,263 @@
-# TypeScript-Aware File Moves for AI Agents
+# ts-refactor-mcp
 
-## Problem
+TypeScript-aware file refactoring for AI agents via the Model Context Protocol (MCP).
 
-When AI coding agents move TypeScript files, imports break. The agent either:
+## What is this?
 
-1. **Naively moves the file** → broken imports everywhere → agent spends tokens fixing them one by one → often misses some → user left with broken build
-2. **Tries to manually update imports** → slow, error-prone, misses re-exports and barrel files → still broken
+An MCP server that enables AI coding agents to move TypeScript files while automatically updating all imports. When you move a file in VS Code, TypeScript's language server updates every import automatically. This tool exposes that same capability to AI agents through MCP.
 
-Meanwhile, VS Code handles this perfectly. When you drag a file in the explorer, TypeScript's language server computes every import that needs updating and applies them atomically. But this capability is locked inside the editor — there's no way for an external agent to access it.
+**The problem it solves:** AI agents can move files, but they break imports. They either miss updates or waste tokens fixing them manually. This server does it correctly in one atomic operation.
 
-**This is the gap**: AI agents have filesystem access but no semantic understanding of TypeScript projects. The tooling exists, it's just not exposed.
+## Installation
 
----
-
-## Appetite
-
-**Small batch: 2 weeks**
-
-This is a focused integration project, not a research problem. The underlying capability (`tsserver`'s `getEditsForFileRename`) already exists and is battle-tested. We're building a bridge, not inventing new technology.
-
----
-
-## Solution
-
-Build an MCP server that wraps a persistent `tsserver` instance and exposes file-move refactoring as tools that any MCP-compatible agent (Claude, Cursor, etc.) can call.
-
-### Core Tools
-
-**`moveFile`**
-```
-Input:  { projectRoot, oldPath, newPath, dryRun?: false }
-Output: { applied: true, filesModified: 12, moved: { from, to } }
+```bash
+npm install ts-refactor-mcp
 ```
 
-Moves the file and applies all import updates atomically. One tool call, zero broken imports, zero wasted tokens.
+Or install from source:
 
-With `dryRun: true`, returns the edit plan without applying — useful if the agent wants to preview or confirm.
-
-**`moveDirectory`**
-```
-Input:  { projectRoot, oldDir, newDir, dryRun?: false }
-Output: { applied: true, filesModified: 47, filesMoved: 8 }
-```
-
-Same thing, but for entire directories. Handles all files recursively.
-
-**`warmup`**
-```
-Input:  { projectRoot }
-Output: { status: 'ready', filesIndexed: 1847 }
+```bash
+git clone https://github.com/schicks/ts-refactor-mcp.git
+cd ts-refactor-mcp
+npm install
+npm run build
 ```
 
-Pre-loads the project so subsequent operations are fast. Agent can call this at session start.
+## MCP Configuration
 
-### Key Design Decisions
+Add to your MCP client configuration (e.g., Claude Desktop):
 
-**Persistent tsserver process**
-
-We keep `tsserver` running between requests. First request pays the startup cost (5-30s for large projects). Subsequent requests: 100ms-2s.
-
-Without persistence, every file move would require a full project reload. That's the mistake existing solutions make.
-
-**Use the project's own TypeScript**
-
-We spawn `tsserver` from `node_modules/typescript`, not a global install. This ensures the refactoring logic matches the project's TypeScript version exactly.
-
-**Atomic operations with dry-run escape hatch**
-
-By default, the server applies all edits and moves the file in one call. This saves tokens and eliminates the chance of partial failures. For agents that want to preview changes first, `dryRun: true` returns the edit plan without applying.
-
-**Automatic tsserver sync**
-
-After applying edits, we notify `tsserver` that files changed. The project stays in sync without the agent needing to manage it.
-
-**Exposed timing and status**
-
-Every response includes how long the operation took. A `getStatus` tool lets agents check if the project is still loading. No black boxes.
-
----
-
-## Rabbit Holes
-
-### ❌ Don't build a full LSP bridge
-
-It's tempting to expose all of `tsserver`'s capabilities — completions, diagnostics, go-to-definition. Resist this. Those features are already available through the editor. We're solving one specific problem: file moves that update imports.
-
-If we scope-creep into "LSP for agents," we'll spend the whole cycle on protocol translation and never ship.
-
-### ❌ Don't try to sync state bidirectionally
-
-When the agent moves files outside our server, we can't perfectly track it. That's fine. We provide a `notifyFileMoved` hint, but we don't guarantee consistency. If things get out of sync, the agent can call `warmup` again.
-
-Trying to build a perfect sync mechanism is a rabbit hole. `tsserver` already handles file watching internally — let it do its job.
-
-### ❌ Don't support non-TypeScript projects
-
-JavaScript-only projects without `tsconfig.json` have different (worse) inference behavior. We'd spend half the cycle on edge cases. Punt this to a future cycle.
-
----
-
-## No-Gos
-
-- **No partial application** — Either all edits succeed or none do; no half-broken states
-- **No project creation** — We require an existing `tsconfig.json`
-- **No monorepo magic** — One tsserver per tsconfig; agent handles coordination
-- **No caching across restarts** — MCP server restart = cold start (acceptable)
-
----
-
-## Fat Marker Sketch
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        Agent                                │
-│                          │                                  │
-│    "Move src/auth/       │                                  │
-│     login.ts to          │                                  │
-│     src/features/auth/"  │                                  │
-│                          ▼                                  │
-│              ┌───────────────────────┐                      │
-│              │   MCP Server          │                      │
-│              │   (ts-refactor)       │                      │
-│              │                       │                      │
-│              │   moveFile()          │                      │
-│              └───────────┬───────────┘                      │
-│                          │                                  │
-│                          ▼                                  │
-│              ┌───────────────────────┐                      │
-│              │   tsserver            │                      │
-│              │   (persistent)        │                      │
-│              │                       │                      │
-│              │   getEditsFor         │                      │
-│              │   FileRename()        │                      │
-│              └───────────┬───────────┘                      │
-│                          │                                  │
-│                          ▼                                  │
-│              ┌───────────────────────┐                      │
-│              │   MCP Server applies: │                      │
-│              │                       │                      │
-│              │   1. Update 12 files  │                      │
-│              │   2. Move login.ts    │                      │
-│              │   3. Sync tsserver    │                      │
-│              └───────────┬───────────┘                      │
-│                          │                                  │
-│                          ▼                                  │
-│              { applied: true, filesModified: 12 }           │
-│              ✓ One tool call, zero broken imports           │
-└─────────────────────────────────────────────────────────────┘
+```json
+{
+  "mcpServers": {
+    "ts-refactor": {
+      "command": "npx",
+      "args": ["ts-refactor-mcp"]
+    }
+  }
+}
 ```
 
----
+Or use the built package:
 
-## Risks and Mitigations
+```json
+{
+  "mcpServers": {
+    "ts-refactor": {
+      "command": "node",
+      "args": ["/path/to/ts-refactor-mcp/dist/index.js"]
+    }
+  }
+}
+```
 
-| Risk | Likelihood | Mitigation |
-|------|------------|------------|
-| tsserver startup too slow for UX | Medium | `warmup` tool + document expected latency |
-| Large projects timeout | Low | Return partial results + timing info |
-| tsserver crashes/hangs | Low | Process supervision + restart on failure |
-| Edit application corrupts files | Low | Atomic writes + validate edits before applying |
-| Agent wants to preview first | Low | `dryRun: true` flag returns plan without applying |
+## Available Tools
 
----
+### `moveFile`
 
-## Success Criteria
+Move a TypeScript file and update all imports automatically.
 
-1. **Agent can move a file in a 1000+ file TypeScript project with zero broken imports**
-2. **Second move in same session completes in <2 seconds**
-3. **Works with Cursor, Claude Code, and any MCP-compatible client**
+**Input:**
+```typescript
+{
+  projectRoot: string;  // Path to project root (where tsconfig.json is)
+  oldPath: string;      // Current file path
+  newPath: string;      // New file path
+  dryRun?: boolean;     // If true, preview changes without applying
+}
+```
 
----
+**Output (when applied):**
+```typescript
+{
+  applied: true;
+  filesModified: number;
+  moved: { from: string; to: string };
+  durationMs: number;
+}
+```
 
-## Out of Scope (Future Cycles)
+**Output (dry-run):**
+```typescript
+{
+  applied: false;
+  edits: Array<{
+    filePath: string;
+    textEdits: Array<{
+      start: { line: number; offset: number };
+      end: { line: number; offset: number };
+      newText: string;
+    }>;
+  }>;
+  wouldMove: { from: string; to: string };
+  filesModified: number;
+}
+```
 
-- Symbol renaming (rename a function across files)
-- Extract to file (move a function to a new file)
-- Auto-fix broken imports (after manual moves)
+**Example:**
+```typescript
+// Move a file and update all imports
+{
+  "projectRoot": "/home/user/my-project",
+  "oldPath": "/home/user/my-project/src/utils/helper.ts",
+  "newPath": "/home/user/my-project/src/lib/helper.ts",
+  "dryRun": false
+}
+
+// Preview changes first
+{
+  "projectRoot": "/home/user/my-project",
+  "oldPath": "/home/user/my-project/src/utils/helper.ts",
+  "newPath": "/home/user/my-project/src/lib/helper.ts",
+  "dryRun": true
+}
+```
+
+### `warmup`
+
+Pre-load a TypeScript project to speed up subsequent operations.
+
+**Input:**
+```typescript
+{
+  projectRoot: string;  // Path to project root (where tsconfig.json is)
+}
+```
+
+**Output:**
+```typescript
+{
+  status: 'ready';
+  durationMs: number;
+}
+```
+
+**Why use this:** First operation on a project takes 5-30 seconds while TypeScript loads. Call `warmup` at session start to pay this cost upfront. Subsequent operations complete in 10-100ms.
+
+## How it Works
+
+1. **Persistent tsserver**: Keeps TypeScript's language server running between requests
+2. **Atomic operations**: All import updates succeed or none do—no partial failures
+3. **Uses project's TypeScript**: Spawns tsserver from your `node_modules/typescript`
+4. **Battle-tested**: Uses the same `getEditsForFileRename` API that VS Code uses
+
+```
+Agent calls moveFile
+    ↓
+MCP Server
+    ↓
+tsserver.getEditsForFileRename() ← Same API VS Code uses
+    ↓
+Apply all edits atomically
+    ↓
+Move the file
+    ↓
+Return success
+```
+
+## Performance
+
+- **Initial warmup**: 5-30 seconds (large projects)
+- **Subsequent moves**: 10-100ms
+- **Memory**: Persistent tsserver process (~100-500MB depending on project size)
+
+## Requirements
+
+- Node.js >= 18.0.0
+- TypeScript project with `tsconfig.json`
+- TypeScript installed in project's `node_modules`
+
+## Development
+
+### Setup
+
+```bash
+git clone https://github.com/schicks/ts-refactor-mcp.git
+cd ts-refactor-mcp
+npm install
+```
+
+### Run Tests
+
+```bash
+npm test                 # Run all tests
+npm run test:watch      # Watch mode
+```
+
+### Build
+
+```bash
+npm run build           # Compile TypeScript
+npm run watch           # Watch mode
+```
+
+### Project Structure
+
+```
+src/
+├── tsserver-client/    # Wrapper around tsserver process
+├── edit-applier/       # Applies text edits to filesystem
+├── mcp-server/         # MCP protocol implementation
+└── types/              # Shared TypeScript types
+
+__tests__/
+├── tsserver-client/    # Unit tests for tsserver wrapper
+├── edit-applier/       # Unit tests for edit applier
+├── mcp-server/         # Integration tests for MCP server
+├── acceptance.test.ts  # End-to-end acceptance test
+└── fixtures/           # Test fixtures
+```
+
+## Architecture Decisions
+
+### Persistent tsserver Process
+
+We keep tsserver running between requests. First request pays startup cost (5-30s), subsequent requests are fast (10-100ms). Without persistence, every move would reload the entire project.
+
+### Atomic Operations
+
+All edits and the file move happen atomically. Either everything succeeds or nothing changes. This prevents broken intermediate states.
+
+### Project's Own TypeScript
+
+We use the TypeScript version from your project's `node_modules`, not a global install. This ensures refactoring behavior matches your project's TypeScript version.
+
+### No State Management
+
+When files change outside our server, we don't track it. If tsserver gets out of sync, call `warmup` again. Trying to maintain perfect sync is complex and unnecessary—tsserver handles file watching internally.
+
+## Limitations
+
+- **TypeScript only**: Requires `tsconfig.json` (JavaScript-only projects not supported)
+- **One project at a time**: One tsserver per tsconfig
+- **No directory moves**: Currently only supports single file moves
+- **Cold starts**: MCP server restart requires project warmup again
+
+## Future Enhancements
+
+Potential future additions (not currently implemented):
+
+- `moveDirectory`: Move entire directories with all files
+- `renameSymbol`: Rename a function/class across files
+- `extractToFile`: Move a function to a new file
+- Multi-root workspace support
 - JavaScript-only project support
-- Multi-root workspaces
 
-These are all valuable, but each is its own pitch. Ship the core, learn from usage, then expand.
+## Contributing
 
----
+Pull requests welcome! Please:
 
-## Work in Progress
+1. Add tests for new functionality
+2. Ensure all tests pass (`npm test`)
+3. Follow existing code style
+4. Update documentation
 
-### Scope 1: tsserver Client
+## License
 
-**The job:** A TypeScript class that manages a tsserver process and exposes a clean async API.
+MIT
 
-**Interface:**
-```typescript
-class TsServerClient {
-  constructor(projectRoot: string)
-  async start(): Promise<void>
-  async getEditsForFileRename(oldPath: string, newPath: string): Promise<FileEdit[]>
-  async notifyFileChanged(path: string): Promise<void>
-  dispose(): void
-}
-```
+## Credits
 
-**Done when:** Unit tests pass against a real tsserver with a small fixture project. No MCP, no file writing — just the protocol layer.
-
----
-
-### Scope 2: Edit Applier
-
-**The job:** A module that takes a list of edits from tsserver and applies them to the filesystem atomically.
-
-**Interface:**
-```typescript
-interface FileEdit {
-  filePath: string
-  textEdits: { start: Position, end: Position, newText: string }[]
-}
-
-async function applyEdits(edits: FileEdit[]): Promise<void>
-async function moveFile(oldPath: string, newPath: string): Promise<void>
-```
-
-**Done when:** Unit tests pass — given a temp directory with files, applies edits correctly, handles edge cases (nested directories, file doesn't exist yet, etc.)
-
-**Key decisions:**
-- Apply edits in reverse order within a file (so positions don't shift)
-- Create parent directories for newPath if needed
-- All-or-nothing: validate all edits are applicable before writing any
-
----
-
-### Scope 3: MCP Shell
-
-**The job:** The MCP server definition — tool schemas, argument parsing, response formatting, npm package setup.
-
-**Interface:**
-```typescript
-// Tools:
-moveFile({ projectRoot, oldPath, newPath, dryRun? })
-  -> { applied, filesModified, moved } | { edits, wouldMove }
-```
-
-**Done when:** MCP server starts, tool is registered, callable from MCP inspector with mock responses. Doesn't need real tsserver yet — can stub the internals.
-
----
-
-### Integration Points
-
-```
-┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│  Scope 1         │     │  Scope 2         │     │  Scope 3         │
-│  tsserver Client │     │  Edit Applier    │     │  MCP Shell       │
-│                  │     │                  │     │                  │
-│  getEditsFor     │     │  applyEdits()    │     │  moveFile tool   │
-│  FileRename()    │     │  moveFile()      │     │                  │
-└────────┬─────────┘     └────────┬─────────┘     └────────┬─────────┘
-         │                        │                        │
-         └────────────────────────┼────────────────────────┘
-                                  │
-                                  ▼
-                         ┌──────────────────┐
-                         │  Integration     │
-                         │                  │
-                         │  MCP tool calls  │
-                         │  tsserver, gets  │
-                         │  edits, applies  │
-                         │  them            │
-                         └──────────────────┘
-```
-
-Each scope has **no dependencies on the others** during development:
-
-- Scope 1 tests against real tsserver with fixture files
-- Scope 2 tests against a temp directory with pre-written files
-- Scope 3 tests against mocked responses
-
-Integration is wiring them together — a few hours once all three are green.
-
----
-
-### Schedule
-
-| Day 1-2 | Day 3-4 | Day 5 |
-|---------|---------|-------|
-| Scope 1: Spawn tsserver, parse responses | Scope 1: `getEditsForFileRename` working | Integration |
-| Scope 2: `applyEdits` basics | Scope 2: Edge cases, atomicity | Integration |
-| Scope 3: MCP boilerplate, tool schema | Scope 3: npm packaging, config examples | Ship |
+Built using:
+- [@modelcontextprotocol/sdk](https://github.com/modelcontextprotocol/sdk) - MCP protocol implementation
+- TypeScript's tsserver - Language service API
