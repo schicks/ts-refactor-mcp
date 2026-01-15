@@ -103,8 +103,7 @@ export class TsServerClient {
       this.cleanup();
     });
 
-    this.process.on('exit', (code) => {
-      console.log('tsserver process exited with code:', code);
+    this.process.on('exit', () => {
       this.cleanup();
     });
 
@@ -189,7 +188,14 @@ export class TsServerClient {
    */
   dispose(): void {
     if (this.process) {
-      this.process.kill();
+      // Remove all listeners to prevent any post-kill events
+      this.process.removeAllListeners();
+      this.process.stdout?.removeAllListeners();
+      this.process.stderr?.removeAllListeners();
+      this.process.stdin?.removeAllListeners();
+
+      // Kill the process
+      this.process.kill('SIGTERM');
       this.cleanup();
     }
   }
@@ -224,24 +230,49 @@ export class TsServerClient {
   private handleData(data: Buffer): void {
     this.buffer += data.toString();
 
-    // Process complete messages
-    let newlineIndex: number;
-    while ((newlineIndex = this.buffer.indexOf('\n')) !== -1) {
-      const line = this.buffer.slice(0, newlineIndex);
-      this.buffer = this.buffer.slice(newlineIndex + 1);
-
-      if (line.trim()) {
-        this.handleMessage(line);
+    // Process complete messages using Content-Length protocol
+    while (true) {
+      // Look for Content-Length header
+      const headerMatch = this.buffer.match(/Content-Length: (\d+)\r?\n/);
+      if (!headerMatch) {
+        break;
       }
+
+      const contentLength = parseInt(headerMatch[1], 10);
+      const headerEndIndex = this.buffer.indexOf('\r\n\r\n');
+      const headerEndIndexAlt = this.buffer.indexOf('\n\n');
+
+      let contentStart: number;
+      if (headerEndIndex !== -1) {
+        contentStart = headerEndIndex + 4; // Skip \r\n\r\n
+      } else if (headerEndIndexAlt !== -1) {
+        contentStart = headerEndIndexAlt + 2; // Skip \n\n
+      } else {
+        // Header not complete yet
+        break;
+      }
+
+      // Check if we have the full content
+      if (this.buffer.length < contentStart + contentLength) {
+        // Not enough data yet
+        break;
+      }
+
+      // Extract the message content
+      const messageContent = this.buffer.slice(contentStart, contentStart + contentLength);
+      this.buffer = this.buffer.slice(contentStart + contentLength);
+
+      // Parse and handle the message
+      this.handleMessage(messageContent);
     }
   }
 
   /**
    * Handle a single message from tsserver
    */
-  private handleMessage(line: string): void {
+  private handleMessage(content: string): void {
     try {
-      const message: TsServerMessage = JSON.parse(line);
+      const message: TsServerMessage = JSON.parse(content);
 
       if (message.type === 'response') {
         const pending = this.pendingRequests.get(message.request_seq);
@@ -259,7 +290,7 @@ export class TsServerClient {
       }
       // Ignore events for now
     } catch (error) {
-      console.error('Failed to parse tsserver message:', line, error);
+      console.error('Failed to parse tsserver message:', content, error);
     }
   }
 
