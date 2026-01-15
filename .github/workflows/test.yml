@@ -26,6 +26,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install fixture dependencies
+        run: cd __tests__/fixtures/simple-project && npm install
+
       - name: Type check
         run: npm run type-check
 
