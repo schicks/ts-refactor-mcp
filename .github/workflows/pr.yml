@@ -60,3 +60,6 @@ jobs:
           cd __tests__/fixtures/simple-project && npm install
           cd ../../..
           npm test
+
+      - name: Package acceptance test
+        run: npm test -- package-acceptance.test.ts
