@@ -1,4 +1,4 @@
-name: Publish Canary Release
+name: Validate PR
 
 on:
   pull_request:
