@@ -7,7 +7,6 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
-    environment: pr
     strategy:
       matrix:
         node-version: [20, 22, 24]
