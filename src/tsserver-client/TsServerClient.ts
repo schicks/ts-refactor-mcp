@@ -1,6 +1,7 @@
 import { spawn, ChildProcess } from 'node:child_process';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import type { FileEdit } from '../types/index.js';
 
 /**
@@ -112,22 +113,29 @@ export class TsServerClient {
   }
 
   /**
-   * Find tsserver in node_modules
+   * Find tsserver using Node's module resolution.
+   * This handles monorepos with hoisted dependencies automatically.
    */
   private findTsServer(): string | null {
-    const tsserverPath = join(
-      this.projectRoot,
-      'node_modules',
-      'typescript',
-      'lib',
-      'tsserver.js'
-    );
-
-    if (existsSync(tsserverPath)) {
-      return tsserverPath;
+    try {
+      // Create a require function that resolves from the project root
+      const requireFromProject = createRequire(join(this.projectRoot, 'package.json'));
+      
+      // Resolve the typescript package from the project's perspective
+      const typescriptPath = requireFromProject.resolve('typescript');
+      
+      // typescript resolves to typescript/lib/typescript.js, we need tsserver.js
+      const tsserverPath = join(dirname(typescriptPath), 'tsserver.js');
+      
+      if (existsSync(tsserverPath)) {
+        return tsserverPath;
+      }
+      
+      return null;
+    } catch (error) {
+      // If typescript isn't installed or can't be resolved, return null
+      return null;
     }
-
-    return null;
   }
 
   /**
