@@ -1,0 +1,36 @@
+# Source files
+src/
+__tests__/
+
+# Build config
+tsconfig.json
+jest.config.js
+
+# Development files
+.vscode/
+.idea/
+.cursor/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment
+.env
+.env.local
+
+# Git
+.git/
+.github/
+
+# Coverage
+coverage/
+
+# Dependencies (users will install their own)
+node_modules/
